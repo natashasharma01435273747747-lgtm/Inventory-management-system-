@@ -1,0 +1,6 @@
+{
+  "name": "SmartStock AI — General Store Inventory & Billing System",
+  "description": "Multi-user general store inventory management, fast POS customer billing, stock adjustment approvals, expense tracking, and Gemini AI business analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

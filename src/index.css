@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: #0B1736;
+    background: linear-gradient(180deg, #EAF1FF 0%, #F3F7FF 45%, #F8FAFC 100%);
+    min-height: 100%;
+  }
+
+  body {
+    background: linear-gradient(180deg, #EAF1FF 0%, #F3F7FF 45%, #F8FAFC 100%);
+    color: #0B1736;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  button,
+  a,
+  input,
+  select,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Markdown formatting for AI assistant messages */
+.assistant-prose {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #1E293B;
+}
+
+.assistant-prose > *:first-child {
+  margin-top: 0;
+}
+
+.assistant-prose > *:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-prose p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.assistant-prose h1,
+.assistant-prose h2,
+.assistant-prose h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: #0F172A;
+  margin-top: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+
+.assistant-prose h3 {
+  font-size: 0.875rem;
+}
+
+.assistant-prose ul,
+.assistant-prose ol {
+  margin-top: 0.4rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1.15rem;
+}
+
+.assistant-prose ul {
+  list-style-type: disc;
+}
+
+.assistant-prose ol {
+  list-style-type: decimal;
+}
+
+.assistant-prose li {
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.assistant-prose strong {
+  font-weight: 600;
+  color: #0F172A;
+}
+
+.assistant-prose hr {
+  border-color: #E2E8F0;
+  margin: 0.75rem 0;
+}
+
+.assistant-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  background-color: #F1F5F9;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  color: #0F172A;
+}
+
+.assistant-prose pre {
+  background-color: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.assistant-prose pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.assistant-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.65rem 0;
+  font-size: 0.8125rem;
+}
+
+.assistant-prose th,
+.assistant-prose td {
+  border-bottom: 1px solid #E2E8F0;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+.assistant-prose th {
+  font-weight: 600;
+  color: #475569;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
