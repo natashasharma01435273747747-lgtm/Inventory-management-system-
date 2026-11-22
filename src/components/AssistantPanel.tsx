@@ -7,7 +7,7 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react';
-import { getStoredToken } from '../api/client.ts';
+import { generateLocalAssistantReply, getStoredToken } from '../api/client.ts';
 import type { ChatMessage, UserRole } from '../types/store.ts';
 
 interface AssistantPanelProps {
@@ -72,30 +72,69 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
     if (!textOverride) setInput('');
     setIsStreaming(true);
 
+    const respondLocally = () => {
+      const reply = generateLocalAssistantReply(trimmed);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantId ? { ...m, content: reply } : m))
+      );
+    };
+
     try {
       const token = getStoredToken();
-      const response = await fetch('/api/assistant/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          messages: nextHistory.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-        }),
-      });
+
+      if (token?.startsWith('local_')) {
+        respondLocally();
+        return;
+      }
+
+      let response: Response;
+      try {
+        response = await fetch('/api/assistant/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            messages: nextHistory.map((m) => ({
+              role: m.role,
+              content: m.content,
+            })),
+          }),
+        });
+      } catch {
+        respondLocally();
+        return;
+      }
+
+      const contentType = response.headers.get('content-type') || '';
 
       if (!response.ok) {
+        const isBackendMissing =
+          response.status === 404 ||
+          response.status === 405 ||
+          response.status === 502 ||
+          response.status === 503 ||
+          !contentType.includes('application/json');
+
+        if (isBackendMissing) {
+          respondLocally();
+          return;
+        }
+
         const errBody = await response.json().catch(() => ({}));
         throw new Error(errBody.error || `Assistant error (${response.status})`);
       }
 
+      if (!contentType.includes('text/event-stream')) {
+        respondLocally();
+        return;
+      }
+
       const reader = response.body?.getReader();
       if (!reader) {
-        throw new Error('Streaming response unavailable.');
+        respondLocally();
+        return;
       }
 
       const decoder = new TextDecoder();

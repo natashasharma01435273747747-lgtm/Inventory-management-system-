@@ -34,15 +34,7 @@ function isLocalhostUrl(urlStr: string): boolean {
 
 function getDefaultCustomerUrl(): string {
   if (typeof window === 'undefined') return 'https://example.com/?view=customer';
-  try {
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set('view', 'customer');
-    return url.toString();
-  } catch {
-    return `${window.location.origin}/?view=customer`;
-  }
+  return `${window.location.origin}/?view=customer`;
 }
 
 /**
