@@ -388,6 +388,7 @@ async function startServer() {
         category: p.category,
         unit: p.unit,
         price: p.price,
+        ...(p.image ? { image: p.image } : {}),
         available: p.stock > 0,
       })),
     });

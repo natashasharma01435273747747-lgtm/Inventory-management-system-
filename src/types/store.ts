@@ -181,6 +181,7 @@ export interface PublicCatalogProduct {
   category: ProductCategory;
   unit: string;
   price: number;
+  image?: string;
   available: boolean;
 }
 

@@ -564,38 +564,48 @@ export async function resetDemoStore(): Promise<StoreSnapshot> {
   );
 }
 
-export async function fetchPublicCatalog(): Promise<PublicCatalogResponse> {
-  const buildLocalCatalog = (): PublicCatalogResponse => {
-    const snapshot = readLocalStore();
-    return {
-      storeName: 'Shree Ganesh General Store',
-      updatedAt: new Date().toISOString(),
-      products: snapshot.products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        category: p.category,
-        unit: p.unit,
-        price: p.price,
-        available: p.stock > 0,
-      })),
-    };
+export function getLocalPublicCatalogSnapshot(): PublicCatalogResponse {
+  const snapshot = readLocalStore();
+  return {
+    storeName: 'Shree Ganesh General Store',
+    updatedAt: new Date().toISOString(),
+    products: snapshot.products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      unit: p.unit,
+      price: p.price,
+      ...(p.image ? { image: p.image } : {}),
+      available: p.stock > 0,
+    })),
   };
+}
 
+export async function fetchPublicCatalog(): Promise<PublicCatalogResponse> {
   if (useLocalBackendFallback) {
-    return buildLocalCatalog();
+    return getLocalPublicCatalogSnapshot();
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  if (controller) {
+    timeoutId = setTimeout(() => controller.abort(), 2500);
   }
 
   try {
-    const res = await fetch('/api/public/catalog', { cache: 'no-store' });
+    const res = await fetch('/api/public/catalog', {
+      cache: 'no-store',
+      ...(controller ? { signal: controller.signal } : {}),
+    });
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
     if (!res.ok || !contentType.includes('application/json')) {
       useLocalBackendFallback = true;
-      return buildLocalCatalog();
+      return getLocalPublicCatalogSnapshot();
     }
     const data = await res.json().catch(() => null);
-    if (!data || !Array.isArray(data.products)) {
+    if (!data || !Array.isArray(data.products) || data.products.length === 0) {
       useLocalBackendFallback = true;
-      return buildLocalCatalog();
+      return getLocalPublicCatalogSnapshot();
     }
     return {
       storeName:
@@ -610,12 +620,17 @@ export async function fetchPublicCatalog(): Promise<PublicCatalogResponse> {
         category: normalizeCategory(p?.category),
         unit: typeof p?.unit === 'string' && p.unit ? p.unit : '1 pack',
         price: Number.isFinite(Number(p?.price)) ? Number(p?.price) : 0,
+        ...(typeof p?.image === 'string' && p.image.trim() ? { image: p.image.trim() } : {}),
         available: Boolean(p?.available),
       })),
     };
   } catch {
     useLocalBackendFallback = true;
-    return buildLocalCatalog();
+    return getLocalPublicCatalogSnapshot();
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
