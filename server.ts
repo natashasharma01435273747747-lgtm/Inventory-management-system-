@@ -514,6 +514,17 @@ async function startServer() {
         ? Math.round(rawMrp * 100) / 100
         : Math.ceil((roundedPrice * 1.1) / 2) * 2;
 
+    const rawImage = typeof req.body?.image === 'string' ? req.body.image.trim() : '';
+    const safeImage =
+      rawImage &&
+      rawImage.length <= 450_000 &&
+      (rawImage.startsWith('data:image/') ||
+        rawImage.startsWith('/src/assets/') ||
+        rawImage.startsWith('/assets/') ||
+        /^https?:\/\//i.test(rawImage))
+        ? rawImage
+        : undefined;
+
     const newProduct: Product = {
       id: `prod-${crypto.randomUUID().slice(0, 8)}`,
       sku,
@@ -522,6 +533,7 @@ async function startServer() {
       unit,
       price: roundedPrice,
       mrp,
+      ...(safeImage ? { image: safeImage } : {}),
       costPrice: Math.round(costPrice * 100) / 100,
       stock,
       minStock,
@@ -589,6 +601,22 @@ async function startServer() {
         ? Math.round(rawMrp * 100) / 100
         : Math.ceil((roundedPrice * 1.1) / 2) * 2;
 
+    let nextImage = existing.image;
+    if (req.body?.image !== undefined) {
+      const rawImage = typeof req.body.image === 'string' ? req.body.image.trim() : '';
+      if (!rawImage) {
+        nextImage = undefined;
+      } else if (
+        rawImage.length <= 450_000 &&
+        (rawImage.startsWith('data:image/') ||
+          rawImage.startsWith('/src/assets/') ||
+          rawImage.startsWith('/assets/') ||
+          /^https?:\/\//i.test(rawImage))
+      ) {
+        nextImage = rawImage;
+      }
+    }
+
     const updated: Product = {
       ...existing,
       sku,
@@ -597,6 +625,7 @@ async function startServer() {
       unit,
       price: roundedPrice,
       mrp,
+      image: nextImage,
       costPrice: Math.round(costPrice * 100) / 100,
       stock,
       minStock,

@@ -1,9 +1,14 @@
-import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Camera, Globe, Trash2, X } from 'lucide-react';
 import type { ProductInput } from '../api/client.ts';
 import type { Product, ProductCategory } from '../types/store.ts';
 import { PRODUCT_CATEGORIES } from '../types/store.ts';
+import {
+  compressImageFile,
+  fetchOpenFoodFactsPhoto,
+} from '../utils/productPhotos.ts';
 import { getLocalIsoDate } from '../utils/storeMetrics.ts';
+import { ProductPackThumbnail } from './ProductPackThumbnail.tsx';
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -28,12 +33,18 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [expiryDate, setExpiryDate] = useState(getLocalIsoDate(90));
   const [supplier, setSupplier] = useState('');
   const [avgDailySales, setAvgDailySales] = useState('5');
+  const [image, setImage] = useState<string>('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [fetchingPhoto, setFetchingPhoto] = useState(false);
+  const [photoStatus, setPhotoStatus] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setError(null);
+    setPhotoStatus(null);
     if (editingProduct) {
       setName(editingProduct.name);
       setCategory(editingProduct.category);
@@ -45,6 +56,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setExpiryDate(editingProduct.expiryDate);
       setSupplier(editingProduct.supplier);
       setAvgDailySales(String(editingProduct.avgDailySales));
+      setImage(editingProduct.image ?? '');
     } else {
       setName('');
       setCategory('Grocery');
@@ -56,10 +68,53 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setExpiryDate(getLocalIsoDate(90));
       setSupplier('');
       setAvgDailySales('5');
+      setImage('');
     }
   }, [isOpen, editingProduct]);
 
   if (!isOpen) return null;
+
+  const handlePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setUploadingPhoto(true);
+    setPhotoStatus(null);
+    setError(null);
+    try {
+      const compressedDataUrl = await compressImageFile(file, 480, 0.82);
+      setImage(compressedDataUrl);
+      setPhotoStatus('Photo compressed and ready to save.');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Unable to process the selected photo.'
+      );
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleAutoFetchPhoto = async () => {
+    const query = name.trim();
+    if (!query) {
+      setPhotoStatus('Enter a product name first to fetch a real photo.');
+      return;
+    }
+    setFetchingPhoto(true);
+    setPhotoStatus(null);
+    try {
+      const fetchedUrl = await fetchOpenFoodFactsPhoto(query, { forceRefresh: true });
+      if (fetchedUrl) {
+        setImage(fetchedUrl);
+        setPhotoStatus('Real product photo fetched from Open Food Facts.');
+      } else {
+        setPhotoStatus('No matching photo found online — you can upload one from your device.');
+      }
+    } finally {
+      setFetchingPhoto(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,6 +152,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
           expiryDate,
           supplier: supplier.trim(),
           avgDailySales: Math.max(0.5, numVelocity || 3),
+          image: image.trim(),
         },
         editingProduct?.id
       );
@@ -115,14 +171,14 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       aria-modal="true"
       aria-label={editingProduct ? 'Edit Product' : 'Add Product'}
     >
-      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div>
             <h3 className="font-display text-base font-semibold text-slate-900">
               {editingProduct ? 'Edit Product' : 'Add New Product'}
             </h3>
             <p className="text-xs text-slate-500">
-              Update pricing, stock thresholds, expiry date, and distributor details.
+              Update product photo, pricing, stock thresholds, expiry date, and supplier.
             </p>
           </div>
           <button
@@ -141,6 +197,72 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               {error}
             </div>
           )}
+
+          {/* Real Product Photo Upload / Capture Section */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 flex flex-col sm:flex-row sm:items-center gap-3.5">
+            <ProductPackThumbnail
+              product={{
+                id: editingProduct?.id,
+                name: name.trim() || editingProduct?.name || 'Product Photo',
+                category,
+                image: image || undefined,
+              }}
+              className="w-16 h-16"
+            />
+            <div className="flex-1 min-w-0 space-y-2">
+              <div>
+                <p className="text-xs font-semibold text-slate-800">
+                  Product Photograph
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Upload or snap a real pack photo from your phone, or auto-fetch by product name.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoFileChange}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                  className="px-3 py-1.5 rounded-lg bg-[#0052FF] hover:bg-[#0044D6] text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{uploadingPhoto ? 'Compressing...' : 'Upload / Capture Photo'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAutoFetchPhoto}
+                  disabled={fetchingPhoto || !name.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>{fetchingPhoto ? 'Searching...' : 'Fetch Online'}</span>
+                </button>
+                {image && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImage('');
+                      setPhotoStatus('Custom photo removed.');
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Remove</span>
+                  </button>
+                )}
+              </div>
+              {photoStatus && (
+                <p className="text-[11px] font-medium text-teal-700">{photoStatus}</p>
+              )}
+            </div>
+          </div>
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -297,7 +419,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || uploadingPhoto}
               className="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-sm font-medium text-white disabled:opacity-60 cursor-pointer"
             >
               {submitting

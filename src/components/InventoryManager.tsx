@@ -17,6 +17,7 @@ import {
   isLowStock,
 } from '../utils/storeMetrics.ts';
 import { ProductModal } from './ProductModal.tsx';
+import { ProductPackThumbnail } from './ProductPackThumbnail.tsx';
 
 interface InventoryManagerProps {
   products: Product[];
@@ -210,8 +211,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/60">
                       <td className="py-3 px-5">
-                        <p className="font-medium text-slate-900">{p.name}</p>
-                        <p className="text-xs text-slate-500">{p.unit}</p>
+                        <div className="flex items-center gap-3">
+                          <ProductPackThumbnail
+                            product={p}
+                            compact
+                            className="w-11 h-11"
+                          />
+                          <div className="min-w-0">
+                            <p className="font-medium text-slate-900">{p.name}</p>
+                            <p className="text-xs text-slate-500">{p.unit}</p>
+                          </div>
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-slate-600 whitespace-nowrap">
                         {p.category}

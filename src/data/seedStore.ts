@@ -7,6 +7,7 @@ import type {
   StockAdjustmentRequest,
   StoreSnapshot,
 } from '../types/store.ts';
+import { BUILT_IN_PRODUCT_PHOTOS } from '../utils/productPhotos.ts';
 import { getLocalIsoDate } from '../utils/storeMetrics.ts';
 
 function isoTimestampAt(offsetDays: number, hour: number, minute: number): string {
@@ -17,7 +18,7 @@ function isoTimestampAt(offsetDays: number, hour: number, minute: number): strin
 }
 
 export function createSeedStore(): StoreSnapshot {
-  const products: Product[] = [
+  const baseProducts: Product[] = [
     // Grocery
     {
       id: 'prod-tata-salt',
@@ -358,6 +359,11 @@ export function createSeedStore(): StoreSnapshot {
       avgDailySales: 2.5,
     },
   ];
+
+  const products: Product[] = baseProducts.map((item) => ({
+    ...item,
+    image: BUILT_IN_PRODUCT_PHOTOS[item.id] ?? item.image,
+  }));
 
   const productById = new Map(products.map((p) => [p.id, p]));
 

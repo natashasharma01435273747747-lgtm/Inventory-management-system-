@@ -17,6 +17,12 @@ import type {
   UserRole,
 } from '../types/store.ts';
 import {
+  getBuiltInProductPhoto,
+  PHOTO_CACHE_STORAGE_KEY,
+  SMARTSTOCK_DATA_VERSION,
+  SMARTSTOCK_DATA_VERSION_KEY,
+} from '../utils/productPhotos.ts';
+import {
   computeDashboardMetrics,
   daysUntilExpiry,
   formatInr,
@@ -26,8 +32,10 @@ import {
   normalizeStoreSnapshot,
 } from '../utils/storeMetrics.ts';
 
+export { SMARTSTOCK_DATA_VERSION };
+
 const STORAGE_VERSION_KEY = 'smartstock_storage_version';
-const CURRENT_STORAGE_VERSION = '4';
+const CURRENT_STORAGE_VERSION = '5';
 const TOKEN_STORAGE_KEY = 'smartstock_auth_token';
 export const REMEMBERED_USER_KEY = 'smartstock_remembered_user';
 export const PUBLIC_STORE_URL_KEY = 'smartstock_public_store_url';
@@ -37,6 +45,8 @@ const LOCAL_INVOICE_KEY = 'smartstock_local_invoice_seq';
 
 const ALLOWED_STORAGE_KEYS = new Set([
   STORAGE_VERSION_KEY,
+  SMARTSTOCK_DATA_VERSION_KEY,
+  PHOTO_CACHE_STORAGE_KEY,
   TOKEN_STORAGE_KEY,
   REMEMBERED_USER_KEY,
   PUBLIC_STORE_URL_KEY,
@@ -132,22 +142,52 @@ function createLocalToken(): string {
 // LocalStorage Engine (Pre-seeded Store + Session Persistence)
 // ---------------------------------------------------------------------------
 
+function hydrateProductPhotos(snapshot: StoreSnapshot): StoreSnapshot {
+  let changed = false;
+  const products = snapshot.products.map((product) => {
+    // Preserve admin-uploaded base64 photos or explicit custom URLs; upgrade empty/stale entries to real studio photos
+    if (product.image && product.image.trim().length > 0) {
+      return product;
+    }
+    const builtIn = getBuiltInProductPhoto(product);
+    if (builtIn) {
+      changed = true;
+      return { ...product, image: builtIn };
+    }
+    return product;
+  });
+  return changed ? { ...snapshot, products } : snapshot;
+}
+
 function readLocalStore(): StoreSnapshot {
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
+      const dataVersion = localStorage.getItem(SMARTSTOCK_DATA_VERSION_KEY);
       const raw = localStorage.getItem(LOCAL_STORE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<StoreSnapshot>;
         const normalized = normalizeStoreSnapshot(parsed);
         if (normalized.products.length > 0) {
-          return normalized;
+          const hydrated = hydrateProductPhotos(normalized);
+          if (dataVersion !== SMARTSTOCK_DATA_VERSION || hydrated !== normalized) {
+            localStorage.setItem(SMARTSTOCK_DATA_VERSION_KEY, SMARTSTOCK_DATA_VERSION);
+            writeLocalStore(hydrated);
+          }
+          return hydrated;
         }
       }
     } catch {
       // Corrupt cache — re-seed cleanly below
     }
   }
-  const seeded = normalizeStoreSnapshot(createSeedStore());
+  const seeded = hydrateProductPhotos(normalizeStoreSnapshot(createSeedStore()));
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.setItem(SMARTSTOCK_DATA_VERSION_KEY, SMARTSTOCK_DATA_VERSION);
+    } catch {
+      // Ignore storage errors
+    }
+  }
   writeLocalStore(seeded);
   return seeded;
 }
@@ -157,6 +197,7 @@ function writeLocalStore(snapshot: StoreSnapshot): StoreSnapshot {
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
       localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(normalized));
+      localStorage.setItem(SMARTSTOCK_DATA_VERSION_KEY, SMARTSTOCK_DATA_VERSION);
     } catch {
       // Ignore quota errors
     }
@@ -250,17 +291,24 @@ export function migrateAndSanitizeStorage(): void {
       localStorage.removeItem(REMEMBERED_USER_KEY);
     }
 
-    // Validate local store JSON if present so malformed data never breaks render
+    // Force-refresh cached product list to attach real product photos when schema version changes
+    const dataVersion = localStorage.getItem(SMARTSTOCK_DATA_VERSION_KEY);
     const rawStore = localStorage.getItem(LOCAL_STORE_KEY);
     if (rawStore !== null) {
       try {
         const parsed = JSON.parse(rawStore) as Partial<StoreSnapshot>;
         if (!parsed || !Array.isArray(parsed.products)) {
           localStorage.removeItem(LOCAL_STORE_KEY);
+        } else if (dataVersion !== SMARTSTOCK_DATA_VERSION) {
+          const upgraded = hydrateProductPhotos(normalizeStoreSnapshot(parsed));
+          localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(upgraded));
+          localStorage.setItem(SMARTSTOCK_DATA_VERSION_KEY, SMARTSTOCK_DATA_VERSION);
         }
       } catch {
         localStorage.removeItem(LOCAL_STORE_KEY);
       }
+    } else if (dataVersion !== SMARTSTOCK_DATA_VERSION) {
+      localStorage.setItem(SMARTSTOCK_DATA_VERSION_KEY, SMARTSTOCK_DATA_VERSION);
     }
   } catch {
     // Ignore storage access errors in restricted iframes/private browsing
@@ -645,6 +693,7 @@ export interface ProductInput {
   unit: string;
   price: number;
   mrp?: number;
+  image?: string;
   costPrice: number;
   stock: number;
   minStock: number;
@@ -678,6 +727,7 @@ export async function createProduct(
         unit: input.unit.trim() || '1 pack',
         price: roundedPrice,
         mrp: input.mrp,
+        image: typeof input.image === 'string' && input.image.trim() ? input.image.trim() : undefined,
         costPrice: Math.round(Number(input.costPrice) * 100) / 100,
         stock: Math.max(0, Math.round(Number(input.stock) || 0)),
         minStock: Math.max(1, Math.round(Number(input.minStock) || 10)),
@@ -742,6 +792,10 @@ export async function updateProduct(
         name: input.name?.trim() || existing.name,
         unit: input.unit?.trim() || existing.unit,
         supplier: input.supplier?.trim() || existing.supplier,
+        image:
+          input.image !== undefined
+            ? input.image.trim() || undefined
+            : existing.image,
       });
       const nextStore = writeLocalStore({
         ...store,
