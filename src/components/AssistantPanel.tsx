@@ -8,7 +8,14 @@ import {
   X,
 } from 'lucide-react';
 import { generateLocalAssistantReply, getStoredToken } from '../api/client.ts';
-import type { ChatMessage, UserRole } from '../types/store.ts';
+import type {
+  ChatMessage,
+  ExpenseRecord,
+  Product,
+  SaleRecord,
+  UserRole,
+} from '../types/store.ts';
+import { queryClientGeminiIfConfigured } from '../utils/assistantEngine.ts';
 
 interface AssistantPanelProps {
   isOpen: boolean;
@@ -16,14 +23,24 @@ interface AssistantPanelProps {
   userRole: UserRole;
   lowStockCount: number;
   expiringCount: number;
+  products: Product[];
+  sales: SaleRecord[];
+  expenses?: ExpenseRecord[];
 }
 
 const STARTER_PROMPTS = [
+  'Which items are currently in stock?',
   'Which items are low in stock?',
+  'Check Tata Salt and Maggi stock & price',
+  "Summarize today's sales and top items",
   'What will sell more next week?',
-  "Summarize today's profit",
-  'Which items are expiring soon and how should we clear them?',
-  'Build a restocking priority list with total budget',
+];
+
+const QUICK_ASK_CHIPS = [
+  'In-stock items',
+  'Low stock alerts',
+  "Today's sales",
+  'Next week demand',
 ];
 
 export const AssistantPanel: React.FC<AssistantPanelProps> = ({
@@ -32,6 +49,9 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
   userRole,
   lowStockCount,
   expiringCount,
+  products,
+  sales,
+  expenses = [],
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -72,18 +92,40 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
     if (!textOverride) setInput('');
     setIsStreaming(true);
 
-    const respondLocally = () => {
-      const reply = generateLocalAssistantReply(trimmed);
+    const liveStoreContext = { products, sales, expenses };
+
+    const setAssistantContent = (reply: string) => {
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { ...m, content: reply } : m))
       );
     };
 
+    // Runs optional client Gemini API (if VITE_GEMINI_API_KEY is configured),
+    // seamlessly falling back to the Intelligent Intent & Live Store Query Engine
+    const respondClientSide = async () => {
+      const geminiReply = await queryClientGeminiIfConfigured(
+        nextHistory,
+        liveStoreContext,
+        userRole
+      );
+      if (geminiReply) {
+        setAssistantContent(geminiReply);
+        return;
+      }
+      const localReply = generateLocalAssistantReply(
+        trimmed,
+        liveStoreContext,
+        userRole
+      );
+      setAssistantContent(localReply);
+    };
+
     try {
       const token = getStoredToken();
 
+      // Static hosting / Vercel local session: run client Gemini or Intelligent Live Store Engine directly
       if (token?.startsWith('local_')) {
-        respondLocally();
+        await respondClientSide();
         return;
       }
 
@@ -103,42 +145,44 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
           }),
         });
       } catch {
-        respondLocally();
+        await respondClientSide();
         return;
       }
 
       const contentType = response.headers.get('content-type') || '';
 
       if (!response.ok) {
-        const isBackendMissing =
+        const isBackendUnavailable =
           response.status === 404 ||
           response.status === 405 ||
           response.status === 502 ||
           response.status === 503 ||
           !contentType.includes('application/json');
 
-        if (isBackendMissing) {
-          respondLocally();
+        if (isBackendUnavailable) {
+          await respondClientSide();
           return;
         }
 
-        const errBody = await response.json().catch(() => ({}));
-        throw new Error(errBody.error || `Assistant error (${response.status})`);
+        // If backend Gemini key is unconfigured or errors on server, still answer accurately from live store data
+        await respondClientSide();
+        return;
       }
 
       if (!contentType.includes('text/event-stream')) {
-        respondLocally();
+        await respondClientSide();
         return;
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        respondLocally();
+        await respondClientSide();
         return;
       }
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let receivedAnyText = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -161,6 +205,7 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
               error?: string;
             };
             if (payload.type === 'chunk' && payload.text) {
+              receivedAnyText = true;
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
@@ -169,24 +214,34 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
                 )
               );
             } else if (payload.type === 'error') {
+              if (!receivedAnyText) {
+                await respondClientSide();
+                return;
+              }
               throw new Error(payload.error || 'Gemini assistant failed.');
             }
           } catch (parseErr) {
-            if (parseErr instanceof Error && parseErr.message !== 'Unexpected end of JSON input') {
+            if (
+              parseErr instanceof Error &&
+              parseErr.message !== 'Unexpected end of JSON input'
+            ) {
               throw parseErr;
             }
           }
         }
       }
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Unable to reach SmartStock AI right now.';
-      setError(msg);
-      setMessages((prev) =>
-        prev.filter((m) => !(m.id === assistantId && m.content.trim() === ''))
+
+      if (!receivedAnyText) {
+        await respondClientSide();
+      }
+    } catch {
+      // Final safety net: always give a live store answer instead of leaving a dead error state
+      const fallbackReply = generateLocalAssistantReply(
+        trimmed,
+        liveStoreContext,
+        userRole
       );
+      setAssistantContent(fallbackReply);
     } finally {
       setIsStreaming(false);
     }
@@ -263,8 +318,8 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
                   Ask anything about your store
                 </p>
                 <p className="mt-1 text-sm text-slate-500 leading-relaxed">
-                  Every answer reads your current stock quantities, today&apos;s bills,
-                  operating expenses, expiry dates, and daily sales pace in real time.
+                  Ask in English or Hinglish — check in-stock items, low-stock alerts,
+                  specific product quantities &amp; prices, or today&apos;s sales in real time.
                 </p>
               </div>
 
@@ -306,7 +361,7 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
                   ) : (
-                    <p className="text-xs text-slate-500">Analyzing live store data...</p>
+                    <p className="text-xs text-slate-500">Checking live store records...</p>
                   )}
                 </div>
               </div>
@@ -323,33 +378,49 @@ export const AssistantPanel: React.FC<AssistantPanelProps> = ({
           )}
         </div>
 
-        {/* Input Form */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            sendMessage();
-          }}
-          className="p-4 border-t border-slate-200 bg-white flex items-center gap-2"
-        >
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={isStreaming}
-            placeholder="Ask about low stock, next week demand, or today's profit..."
-            className="flex-1 px-3.5 py-2.5 text-sm border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15 disabled:bg-slate-50"
-          />
-          <button
-            type="submit"
-            disabled={isStreaming || !input.trim()}
-            aria-label="Send question"
-            className="px-4 py-2.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shrink-0 whitespace-nowrap"
+        {/* Quick-Ask Suggestion Chips + Input Form */}
+        <div className="border-t border-slate-200 bg-white">
+          <div className="px-4 pt-3 pb-1 flex items-center gap-1.5 overflow-x-auto">
+            {QUICK_ASK_CHIPS.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                disabled={isStreaming}
+                onClick={() => sendMessage(chip)}
+                className="px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-800 text-xs font-medium text-slate-700 transition-colors cursor-pointer whitespace-nowrap shrink-0 disabled:opacity-50"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendMessage();
+            }}
+            className="px-4 pt-2 pb-4 flex items-center gap-2"
           >
-            <Send className="w-4 h-4" />
-            <span>Ask</span>
-          </button>
-        </form>
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              disabled={isStreaming}
+              placeholder="Ask in English or Hinglish (e.g. Maggi stock, Today's sales)..."
+              className="flex-1 px-3.5 py-2.5 text-sm border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15 disabled:bg-slate-50"
+            />
+            <button
+              type="submit"
+              disabled={isStreaming || !input.trim()}
+              aria-label="Send question"
+              className="px-4 py-2.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shrink-0 whitespace-nowrap"
+            >
+              <Send className="w-4 h-4" />
+              <span>Ask</span>
+            </button>
+          </form>
+        </div>
       </aside>
     </div>
   );

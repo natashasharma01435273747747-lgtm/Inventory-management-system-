@@ -739,6 +739,9 @@ export function App() {
         userRole={user.role}
         lowStockCount={metrics?.lowStockProducts.length ?? 0}
         expiringCount={metrics?.expiringSoonProducts.length ?? 0}
+        products={store?.products ?? []}
+        sales={store?.sales ?? []}
+        expenses={store?.expenses ?? []}
       />
 
       {/* Printable Invoice Receipt Modal */}

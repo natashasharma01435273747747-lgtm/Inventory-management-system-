@@ -17,6 +17,10 @@ import type {
   UserRole,
 } from '../types/store.ts';
 import {
+  answerStoreQuestionLocally,
+  type AssistantStoreContext,
+} from '../utils/assistantEngine.ts';
+import {
   getBuiltInProductPhoto,
   PHOTO_CACHE_STORAGE_KEY,
   SMARTSTOCK_DATA_VERSION,
@@ -1249,73 +1253,19 @@ export async function reviewStockAdjustment(
 }
 
 // ---------------------------------------------------------------------------
-// Offline / Static Hosting Smart Assistant Summary Fallback
+// Offline / Static Hosting Smart Assistant Live Store Query Engine
 // ---------------------------------------------------------------------------
 
-export function generateLocalAssistantReply(question: string): string {
-  const store = readLocalStore();
-  const metrics = computeDashboardMetrics(store.products, store.sales, store.expenses);
-  const q = question.toLowerCase();
-
-  if (q.includes('low') || q.includes('restock') || q.includes('reorder') || q.includes('budget')) {
-    const suggestions = metrics.restockSuggestions.slice(0, 8);
-    if (suggestions.length === 0) {
-      return '### All Stock Levels Healthy\n\nNo products are currently below their reorder threshold.';
-    }
-    const totalBudget = suggestions.reduce((sum, s) => sum + s.estimatedCost, 0);
-    const rows = suggestions
-      .map(
-        (s) =>
-          `- **${s.product.name}** (${s.product.unit}) — Stock: **${s.product.stock}** / Min ${s.product.minStock} → Reorder **+${s.recommendedQty} units** (~${formatInr(s.estimatedCost)}) *(${s.urgency})*`
-      )
-      .join('\n');
-    return `### Low-Stock & Smart Restock Priority\n\n${rows}\n\n**Estimated Priority Restock Budget:** ${formatInr(totalBudget)}`;
-  }
-
-  if (q.includes('expir')) {
-    const expiring = metrics.expiringSoonProducts;
-    if (expiring.length === 0) {
-      return '### No Immediate Expiry Alerts\n\nAll active products have more than 14 days of shelf life remaining.';
-    }
-    const rows = expiring
-      .map((p) => {
-        const days = daysUntilExpiry(p.expiryDate);
-        const tag = days <= 0 ? 'Expired / Today' : `${days} days left`;
-        return `- **${p.name}** (${p.unit}) — **${p.stock} units** in stock · Expiry: \`${p.expiryDate}\` (**${tag}**)`;
-      })
-      .join('\n');
-    return `### Upcoming Expiry Watch (Next 14 Days)\n\n${rows}\n\n**Action Tip:** Place items with ≤5 days left near the POS billing counter with a 10–15% bundle discount to clear inventory before expiry.`;
-  }
-
-  if (q.includes('profit') || q.includes('today') || q.includes('sales') || q.includes('expense')) {
-    return [
-      `### Today's & 7-Day Store Performance`,
-      '',
-      `- **Today's Sales:** ${formatInr(metrics.todaysSales)} across **${metrics.todaysBillsCount}** bills`,
-      `- **Today's Gross Profit:** ${formatInr(metrics.todaysGrossProfit)}`,
-      `- **7-Day Total Sales:** ${formatInr(metrics.totalSales7d)}`,
-      `- **Recorded Business Expenses:** ${formatInr(metrics.totalExpenses)}`,
-      `- **7-Day Net Profit:** ${formatInr(metrics.netProfit)} (${metrics.netProfitMarginPct}% margin)`,
-      `- **Inventory Alert Count:** ${metrics.lowStockProducts.length} low-stock · ${metrics.expiringSoonProducts.length} expiring soon`,
-    ].join('\n');
-  }
-
-  // Demand forecast / top movers default
-  const topMovers = [...store.products]
-    .sort((a, b) => b.avgDailySales - a.avgDailySales)
-    .slice(0, 6);
-  const moverLines = topMovers
-    .map(
-      (p) =>
-        `- **${p.name}** (${p.category}) — ~**${Math.round(p.avgDailySales * 7)} units** projected next 7 days · Current stock: **${p.stock}**`
-    )
-    .join('\n');
-
-  return [
-    `### Next Week Demand Forecast & Store Snapshot`,
-    '',
-    moverLines,
-    '',
-    `**Quick Summary:** ${metrics.totalProducts} SKUs active · Today's sales ${formatInr(metrics.todaysSales)} · ${metrics.lowStockProducts.length} items need restocking.`,
-  ].join('\n');
+export function generateLocalAssistantReply(
+  question: string,
+  liveStore?: AssistantStoreContext,
+  userRole?: UserRole
+): string {
+  const store =
+    liveStore && liveStore.products.length > 0 ? liveStore : readLocalStore();
+  return answerStoreQuestionLocally(
+    question,
+    store,
+    userRole ?? getActiveLocalUser().role
+  );
 }
